@@ -9,10 +9,8 @@ editor_options:
 
 ```{r setup, warning=F,message=F}
 library(tidyverse)
-library(tidyr)
-library(ggthemes)
 library(lubridate)
-library(ggsci)
+library(ggpubr)
 
 # Now that we have learned how to munge (manipulate) data
 # and plot it, we will work on using these skills in new ways
@@ -46,15 +44,12 @@ full_long <- rbind(ndvi,ndmi,ndsi) %>%
   gather(key='site',value='value',-DateTime,-data) %>%
   filter(!is.na(value))
 
-
-head(full_long)
-
 ```
 
 
 
 
-## Question 1) 
+## Question 1
 
 What is the correlation between NDVI and NDMI? - here I want you to
 convert the full_long dataset in to a wide dataset using the 
@@ -62,23 +57,80 @@ function "spread" and then make a plot that shows the correlation s a
 function of if the site was burned or not (x axis should be ndmi)
 You should exclude winter months and focus on summer months
 
-```{r, warning=F,message=F}
+```{r, warning=F,message=F, fig.height= 7.5, fig.width= 6, fig.align='center'}
+
+## Create tibble with individual columns, filter summer months
 
 Q1.data <- full_long %>%
            filter(!is.na(value)) %>%
            pivot_wider(names_from = c(data),
                        values_from = c(value)) %>% 
-           mutate(month = month(DateTime)) %>%
-           filter(month %in% c(6,7,8,9))
-           
+           mutate(month = month(DateTime, label = T)) %>%
+           filter(month %in% c("Jun", "Jul", "Aug", "Sep")) %>%
+           mutate(site = recode(site, unburned = "Unburned", burned = "Burned"))
+
+## Create another tibble with all the data named "all".
+
+Q1.all <- full_long %>%
+           filter(!is.na(value)) %>%
+           pivot_wider(names_from = c(data),
+                       values_from = c(value)) %>% 
+           mutate(month = month(DateTime, label = T)) %>%
+           filter(month %in% c("Jun", "Jul", "Aug", "Sep")) %>%
+           mutate(site = recode(site, unburned = "Unburned", burned = "Burned")) %>%
+           mutate(month = "All")
+
+## Combine datasets
+
+Q1.data <- rbind(Q1.data, Q1.all)
+
+###
+
+## Create an empty tibble to fill with correlations between NDVI and NDMI for each month, and each site type.
+
+Q1.corr <- tibble(month = rep(unique(Q1.data$month), 2),
+                  site = rep(unique(Q1.data$site), each = 5),
+                  Corr = vector(mode = "numeric", length = 10))
+
+## Loop through and filter out subsets of data to run cor() on.
+
+for(i in 1:10){
+
+  temp <- Q1.data %>% 
+            filter(month == Q1.corr$month[i] &
+                     site == Q1.corr$site[i]) # It's unclear to me if this is "tidy" approved. Is there a better way to do it?
+  
+  Q1.corr$Corr[i] <- paste("r = ", round(cor(temp$ndmi, temp$ndvi, "complete.obs"),2))
+}
+
+###
+
+## Plot data.
 
 ggplot(data = Q1.data, aes(x = ndmi, y = ndvi)) +
-  geom_point(aes(fill = month), shape = 21, size = 3) +
-  geom_smooth(method = "lm") +
-  facet_grid(.~site) +
-  xlab("NDMI") +
-  ylab("NDVI") +
-  theme_classic()
+  geom_point(fill = "lightgrey", 
+             shape = 21, 
+             size = 3) +
+  geom_smooth(method = "lm",
+              se = FALSE,
+              lty = 1,
+              color = "black",
+              size = 1.5) +
+  facet_grid(month~site) +
+  scale_x_continuous(name = "NDMI", 
+                     limits = c(-0.4, 0.4)) +
+  scale_y_continuous(name = "NDVI", 
+                     limits = c(0, 0.75)) +
+  geom_text(data = Q1.corr,
+            aes(x = 0.3,
+                y = 0.65,
+                label = Corr,
+                fill = NULL,
+                group = month)) +
+  theme_classic2() +
+  theme(panel.background = element_rect(fill = NULL, color = "black"),
+        strip.background = element_blank(),
+        axis.text = element_text(color = "black"))
 
 ```
 
@@ -89,7 +141,9 @@ ggplot(data = Q1.data, aes(x = ndmi, y = ndvi)) +
 In other words, does the previous year's snow cover influence vegetation
  growth for the following summer?
 
-```{r, warning=F,message=F}
+```{r, warning=F, message=F, fig.height= 6, fig.width= 6, fig.align='center'}
+
+## Create a dataset with just the winter values, then find the annual average winter NDSI
 
 Q2.data.winter <- full_long %>%
                     filter(!is.na(value)) %>%
@@ -100,6 +154,8 @@ Q2.data.winter <- full_long %>%
                     filter(Month %in% c(1, 2, 3, 4)) %>%
                     group_by(site, Year) %>%
                     summarise(Mean_Winter_NDSI = mean(ndsi)) 
+
+## Create a dataset with just the summer values, then find the annual average summer NDVI
 
 Q2.data.summer <- full_long %>%
                     filter(!is.na(value)) %>%
@@ -112,74 +168,168 @@ Q2.data.summer <- full_long %>%
                     summarise(Mean_Summer_NDVI = mean(ndvi)) 
 
 
+## Combine the datasets
+
 Q2.data <-  inner_join(Q2.data.summer,
                        Q2.data.winter)
 
-cor(Q2.data$Mean_Summer_NDVI,
-    Q2.data$Mean_Winter_NDSI,
-    use = "complete.obs")
+## Find the correlation between summer NDVI and winter NDSI
 
-summary(lm(Mean_Winter_NDSI ~ Mean_Summer_NDVI, data = Q2.data))
+Q2.Corr <- paste("r = ", 
+                 round(cor(Q2.data$Mean_Summer_NDVI,
+                           Q2.data$Mean_Winter_NDSI,
+                           use = "complete.obs"), 3))
+
+## Plot data
 
 ggplot(data = Q2.data, aes(x = Mean_Winter_NDSI, y = Mean_Summer_NDVI)) +
-  geom_point() +
- # facet_grid(.~site) +
-  geom_smooth(method = "lm")
-
+  geom_point(fill = "lightgrey", 
+             shape = 21, 
+             size = 4) +
+  geom_smooth(method = "lm",
+              se = FALSE,
+              lty = 2,
+              color = "black",
+              size = 1.5) +
+  scale_x_continuous(name = "Mean Winter NDSI",
+                     limits = c(-0.5, 0.6)) +
+  scale_y_continuous(name = "Mean Summer NDVI",
+                     limits = c(0.11, 0.6)) +
+  annotate(geom = "text",
+           x = 0.5,
+           y = 0.6, 
+           label = Q2.Corr) +
+  theme_classic2() +
+  theme(panel.background = element_rect(fill = NULL, color = "black"),
+        axis.text = element_text(color = "black"))
 ```
 
 
-## Q3
+## Question 3
 
 How is the snow effect from question 2 different between pre- and post-burn
 and burned and unburned? 
 
-```{r, warning=F,message=F}
+```{r, warning=F, message=F, fig.height= 6, fig.width= 6, fig.align='center'}
+
+## Add column for site burn timing to Q2.data.
 
 Q3.data <-  Q2.data %>% 
-              mutate(Status = if_else(Year < 2002, "Pre-Burn", "Post-Burn"))
+              mutate(Status = if_else(Year < 2002, "Pre-Burn", "Post-Burn")) %>%
+              mutate(site = recode(site, unburned = "Unburned", burned = "Burned"))
+
+## Use the same for loop structure from Q 1 to calculate correlations for each subset of data.
+
+Q3.corr <- tibble(Status = rep(unique(Q3.data$Status), 2),
+                  site = rep(unique(Q3.data$site), each = 2),
+                  Corr = vector(mode = "numeric", length = 4))
+
+## Loop through and filter out subsets of data to run cor() on.
+
+for(i in 1:4){
+
+  temp <- Q3.data %>% 
+            filter(Status == Q3.corr$Status[i] &
+                     site == Q3.corr$site[i])
+  
+  Q3.corr$Corr[i] <- paste("r = ", round(cor(temp$Mean_Winter_NDSI, temp$Mean_Summer_NDVI, "complete.obs"),3))
+}
+
+###
+
+## Plot data
 
 ggplot(data = Q3.data, aes(x = Mean_Winter_NDSI, y = Mean_Summer_NDVI)) +
-  geom_point() +
+  geom_point(fill = "lightgrey", 
+             shape = 21, 
+             size = 4) +
+  geom_smooth(method = "lm",
+              se = FALSE,
+              lty = 2,
+              color = "black",
+              size = 1.5) +
   facet_grid(Status~site) +
-  geom_smooth(method = "lm")
-
+  scale_x_continuous(name = "Mean Winter NDSI",
+                     limits = c(-0.5, 0.6)) +
+  scale_y_continuous(name = "Mean Summer NDVI",
+                     limits = c(0.11, 0.6)) +
+    geom_text(data = Q3.corr,
+            aes(x = 0.45,
+                y = 0.55,
+                label = Corr)) +
+  theme_classic2() +
+  theme(panel.background = element_rect(fill = NULL, color = "black"),
+        axis.text = element_text(color = "black"))
+  
 
 ```
+
 ## Question 4
 
 What month is the greenest month on average? 
 
-```{r}
+```{r, warning=F, message=F, fig.height= 6, fig.width= 6, fig.align='center'}
 
- full_long %>%
-  filter(!is.na(value)) %>%
-  pivot_wider(names_from = c(data),
-              values_from = c(value)) %>% 
-              mutate(Year = year(DateTime), 
-                     Month = month(DateTime)) %>%
-   group_by(Month) %>% 
-   summarise(Mean_NDVI = mean(ndvi, na.rm = T)) %>% 
-   filter(Mean_NDVI == max(Mean_NDVI))
+Q4.data <- full_long %>%
+            filter(!is.na(value)) %>%
+            pivot_wider(names_from = c(data),
+                        values_from = c(value)) %>% 
+            mutate(Year = year(DateTime), 
+                   Month = month(DateTime, label = T)) %>%
+            group_by(Month) %>% 
+            summarise(Mean_NDVI = mean(ndvi, na.rm = T))
+
+Q4.data %>%
+  filter(Mean_NDVI == max(Mean_NDVI))
+
+
+ggplot(data = Q4.data, aes(x = Month, y = Mean_NDVI)) +
+  geom_col(fill = "lightgrey",
+           color = "black") +
+  geom_col(data = Q4.data[Q4.data$Month == "Aug",], 
+           aes(x = Month, y = Mean_NDVI), 
+           fill = "forestgreen", 
+           color = "black") +
+  geom_hline(yintercept = 0) +
+  ylab("Mean NDVI") +
+  theme_classic2() +
+  theme(panel.background = element_rect(fill = NULL, color = "black"),
+        axis.text = element_text(color = "black"))
 
 ```
 
 
-## Question 5) 
+## Question 5
 
 What month is the snowiest on average?
 
-```{r}
+```{r, warning=F, message=F, fig.height= 6, fig.width= 6, fig.align='center'}
 
- full_long %>%
-  filter(!is.na(value)) %>%
-  pivot_wider(names_from = c(data),
-              values_from = c(value)) %>% 
-              mutate(Year = year(DateTime), 
-                     Month = month(DateTime)) %>%
-   group_by(Month) %>% 
-   summarise(Mean_NDSI = mean(ndsi, na.rm = T)) %>% 
-   filter(Mean_NDSI == max(Mean_NDSI))
+Q5.data <- full_long %>%
+            filter(!is.na(value)) %>%
+            pivot_wider(names_from = c(data),
+                        values_from = c(value)) %>% 
+            mutate(Year = year(DateTime), 
+                   Month = month(DateTime, label = T)) %>%
+            group_by(Month) %>% 
+            summarise(Mean_NDSI = mean(ndsi, na.rm = T))
+
+Q5.data %>%
+  filter(Mean_NDSI == max(Mean_NDSI))
+
+
+ggplot(data = Q5.data, aes(x = Month, y = Mean_NDSI)) +
+  geom_col(fill = "lightgrey",
+           color = "black") +
+  geom_col(data = Q5.data[Q5.data$Month == "Jan",], 
+           aes(x = Month, y = Mean_NDSI), 
+           fill = "red", 
+           color = "black") +
+  geom_hline(yintercept = 0) +
+  ylab("Mean NDSI") +
+  theme_classic2() +
+  theme(panel.background = element_rect(fill = NULL, color = "black"),
+        axis.text = element_text(color = "black"))
 
 ```
 
